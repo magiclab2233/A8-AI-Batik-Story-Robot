@@ -1,101 +1,177 @@
-# TalkingPuppet
-这是一个在树莓派上运行的对话人偶
-基本工作模式包含两部分：
-1、树莓派边端识别语音；
-1.1、唤醒词：屈原在吗
-1.2、退出词：屈原再见
-2、云端5o音频对话大模型
+# 非遗扎染 AI 故事讲解机器人
 
-PS:
-树莓派识别到唤醒词和退出词，建立链接成功或关闭链接成功后会播放提示音，提醒用户。
+> 在千年扎染蓝白间，赋予古老工艺以智慧之声。本项目是一款融合非遗美学与前沿科技的智能语音对话人偶，让“能听会说懂情绪”的人机互动，像苍山洱海间的一场温柔回响。
 
+---
 
-## Getting started
+## 项目简介
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+**非遗扎染 AI 故事讲解机器人**（AI Batik Story Robot）是一款运行在 **Raspberry Pi 4B** 上的端云协同智能语音交互系统。项目以“中国非遗扎染”为核心文化背景，通过本地轻量级语音唤醒与云端多模态大模型“**日日新 5o**”相结合，实现了毫秒级响应、全双工实时语音对话与情感式交流。
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+项目采用“端-云协同”架构：
+- **端侧**负责低功耗持续监听唤醒词、实时音频采集与噪声抑制，保障隐私与低延迟；
+- **云侧**负责语义理解、上下文记忆与多轮对话生成，持续迭代对话能力。
 
-## Add your files
+它不仅是智能产品，更是新时代的“数智传声筒”，可用于智能家居、教育陪护、公共服务导览等多种场景。
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
+---
+
+## 功能特点
+
+- **毫秒级唤醒响应**  
+  基于 Vosk 轻量级中文语音识别模型在边端持续运行，检测到唤醒词后秒级唤起对话。
+
+- **高鲁棒性语音识别**  
+  集成 WebRTC + VAD（语音活动检测）与自适应噪声抑制，在嘈杂环境中也能稳定识别人声。
+
+- **“日日新 5o”多模态互动**  
+  接入商汤多模态语音大模型，支持上下文理解、情感识别、随时打断与多轮对话，以音频流形式智能回答用户提问。
+
+- **全双工实时语音对话**  
+  用户与 AI 可进行自然流畅的语音问答；说出结束词后系统自动关闭链接，回归待机监听状态。
+
+- **隐私优先的端云协同**  
+  唤醒与基础音频处理在本地完成，仅对话阶段的音频流经加密通道上云，兼顾智能与隐私。
+
+---
+
+## 技术架构与实现原理
+
+### 总体架构
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.bj.sensetime.com/innoflow/talkingpuppet.git
-git branch -M main
-git push -uf origin main
+┌─────────────────────────────────────────────────────────────┐
+│                        云端层                                │
+│  商汤日日新 5o 多模态语音大模型 (WebSocket 全双工)            │
+│              ↕ 加密音频流 / JWT 认证                         │
+├─────────────────────────────────────────────────────────────┤
+│                      边缘层 (Raspberry Pi 4B)                │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐  │
+│  │  Vosk 唤醒    │───→│  Flask 本地   │───→│  WebRTC      │  │
+│  │  (PyAudio)   │    │  服务 (8000) │    │  (Agora)     │  │
+│  └──────────────┘    └──────────────┘    └──────────────┘  │
+│         ↑                      ↑                ↑           │
+│    麦克风输入             浏览器(index.html)   扬声器输出      │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-## Integrate with your tools
+### 核心模块说明
 
-- [ ] [Set up project integrations](https://gitlab.bj.sensetime.com/innoflow/talkingpuppet/-/settings/integrations)
+1. **边端唤醒模块 (`play.py`)**
+   - 使用 `vosk-model-small-cn-0.22` 中文小模型，通过 **PyAudio** 以 16kHz 双通道采集环境音频；
+   - 将立体声音频实时转换为单声道后送入识别器，持续监听唤醒词（默认 **`老师`**）；
+   - 检测到唤醒词后，调用 `start_browser()` 自动启动 Chromium 浏览器并加载 `index.html`；
+   - 对话结束后浏览器关闭，Vosk 重新进入监听状态，降低空闲功耗。
 
-## Collaborate with your team
+2. **本地服务模块 (`server.py`)**
+   - 基于 **Flask** 运行在 `0.0.0.0:8000`，提供三个核心接口：
+     - `GET /token` — 使用 JWT 为当前会话生成访问云端 5o 模型的临时凭证（有效期 1 小时）；
+     - `GET /started` — 客户端建立连接后播放提示音，通知用户可开始对话；
+     - `GET /closed` — 客户端关闭后停止浏览器并播放提示音，回归待机。
+   - 启动时会将树莓派扩展板风扇转速设为 0（依赖 `/home/pi/sensestorm3-rcu/src/rcu.py`，请根据实际硬件调整路径）。
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
+3. **WebRTC 客户端 (`index.html`)**
+   - 页面加载后自动执行：获取本地 Token → 连接 5o WebSocket → 获取 Agora 频道信息 → 启动音频流；
+   - 通过 **Agora WebRTC SDK** 实现低延迟音视频（本项目仅使用音频）推拉流；
+   - 配置 VAD 参数（负阈值 `0.5` / 正阈值 `0.98` / 最短语音 `300ms` / 最短静默 `600ms`），自动过滤环境噪声，减少带宽消耗；
+   - 系统提示词（System Prompt）固定为扎染文化背景，引导大模型以生动亲切的语言讲述扎染历史与内涵；
+   - 当检测到用户说出 **“再见”** 时，大模型返回 **“好的，再见。”** 作为结束信号，客户端自动停止流、关闭浏览器并通知本地服务器。
 
-## Test and Deploy
+### 交互流程
 
-Use the built-in continuous integration in GitLab.
+1. **待机监听**：Vosk 在后台持续监听环境音频；
+2. **语音唤醒**：用户说出唤醒词 → 浏览器自动弹出 → 播放提示音；
+3. **建立连接**：页面自动获取 Token 并与云端 5o 建立 WebSocket 全双工链接，同时加入 Agora 音频频道；
+4. **实时对话**：用户与 AI 进行语音问答，可随时打断；
+5. **结束对话**：用户说“再见”→ AI 回复结束语 → 关闭浏览器 → 播放提示音 → Vosk 恢复监听。
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+---
 
-***
+## 项目目录结构
 
-# Editing this README
+```
+A8-非遗扎染AI故事讲解机器人
+├── model/
+│   └── vosk-model-small-cn-0.22/     # Vosk 中文轻量级语音识别模型
+├── server.py                         # Flask 本地服务主程序
+├── play.py                           # 浏览器控制、音频播放、Vosk 唤醒监听
+├── index.html                        # WebRTC 客户端页面（Agora + 5o WebSocket）
+├── notify.wav                        # 唤醒/连接/断开提示音
+├── README.md                         # 项目说明文档
+├── .gitignore                        # Git 忽略规则
+└── upload_log.txt                    # 上传日志记录
+```
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+---
 
-## Suggestions for a good README
+## 安装与运行说明
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+### 硬件清单
 
-## Name
-Choose a self-explaining name for your project.
+- **Raspberry Pi 4B**（已预装 Raspberry Pi OS）
+- 麦克风（建议带降噪的 USB 麦克风或阵列麦）
+- 扬声器（3.5mm 音频输出或 USB 音箱）
+- 显示器与键鼠（首次配置使用）
+- 可选：SenseStorm 扩展板（若使用风扇控制功能）
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+### 软件依赖
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+确保树莓派已安装 Python 3 及以下依赖包：
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+```bash
+pip3 install flask flask-cors pyjwt pyaudio sounddevice numpy vosk
+```
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+同时需要系统预装 **Chromium 浏览器**（Raspberry Pi OS 默认已包含）。
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+### 模型准备
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+下载 [Vosk 中文小模型 `vosk-model-small-cn-0.22`](https://alphacephei.com/vosk/models) 并解压到项目根目录的 `model/vosk-model-small-cn-0.22/` 文件夹下。
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+### 运行方式
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+1. 克隆项目并进入目录：
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+```bash
+git clone https://github.com/magiclab2233/A8-AI-Batik-Story-Robot.git
+cd A8-AI-Batik-Story-Robot
+```
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+2. 启动主程序：
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+```bash
+python3 server.py
+```
 
-## License
-For open source projects, say how it is licensed.
+> **提示**：在官方部署的树莓派镜像中，也可直接在终端运行 `./shell.sh` 启动程序（开机密码：`senseedu@123`）。
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+3. 程序启动后，Vosk 进入监听状态。说出唤醒词 **“老师”**，即可开始与扎染 AI 讲解机器人对话；说 **“再见”** 即可结束。
+
+### 注意事项
+
+- `server.py` 中硬编码了云端 5o 的 `iss` 与 `secret`，以及本地 `rcu.py` 的绝对路径 `/home/pi/sensestorm3-rcu/src/rcu.py`。若在其他硬件环境运行，请根据实际情况修改对应路径与密钥配置。
+- 为确保云端大模型正常连接，设备需能够访问互联网。
+- 若屏幕显示不清晰，可尝试重新插拔 HDMI 线缆。
+
+---
+
+## 使用场景
+
+- **智能家居中控**：语音唤醒家电、安防联动
+- **教育陪护场景**：儿童非遗故事互动、语言学习陪练
+- **公共服务空间**：博物馆/机场语音导览、银行智能客服
+- **工业与无障碍服务**：工业语音控制、视障人士语音助手
+
+---
+
+## 许可证 / 声明
+
+本项目为**学习与交流**使用的开源演示项目，旨在探索非遗文化与人工智能技术的融合创新。
+
+- 项目中使用的 **商汤日日新 5o** API 与 **Agora SDK** 版权归各自公司所有，使用时请遵守相关服务条款；
+- `vosk-model-small-cn-0.22` 遵循 [Apache 2.0](https://github.com/alphacep/vosk-api/blob/master/COPYING) 许可；
+- 本项目代码遵循 MIT 许可证开放，欢迎 fork 与二次创作，但请勿将内置密钥用于商业环境。
+
+---
+
+*让技术与文化在指尖与音波间自然共鸣。*
