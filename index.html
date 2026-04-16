@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>自动执行脚本示例</title>
+    <style>
+    #result {
+        width: 600px;
+        height: 480px;
+        border: 1px solid #ccc;
+        overflow-y: auto;
+        padding-left: 10px;
+    }
+    </style>
+</head>
+<body>
+    <h1>自动执行脚本示例</h1>
+    </div>
+    <div id="result" class="box">
+        <p>Logs:</p>
+    </div>
+
+    <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
+    <script>
+
+        var client;
+        var localTracks = {
+        //   videoTrack: null,
+          audioTrack: null
+        };
+        let agoraAppid = '';
+        let agoraToken = '';
+        let agoraChannelId = '';
+
+        (async () => {
+            token = await fetchToken();
+            if(token == ""){
+                console.log("token is null")
+                return
+            }
+            await connect_ws(token);
+            await start_stream();
+	    started();
+        })();
+
+        function add_log(log) {
+            const p = document.createElement('p');
+            p.textContent = `>>> ${log}`;
+            result.appendChild(p);
+            result.scrollTop = result.scrollHeight;
+        };
+
+        async function fetchToken() {
+            try {
+                let response = await fetch("http://127.0.0.1:8000/token");
+                data = await response.json();
+                return data.token
+            } catch (error) {
+                console.error("Error fetching token:", error);
+                return null
+            }
+        }
+        async function closed() {
+            try {
+                let response = await fetch("http://127.0.0.1:8000/closed");
+                return 
+            } catch (error) {
+                console.error("Error fetching token:", error);
+                return
+            }
+        }
+
+        async function started() {
+            try {
+                let response = await fetch("http://127.0.0.1:8000/started");
+                return 
+            } catch (error) {
+                console.error("Error fetching token:", error);
+                return
+            }
+        }
+
+        function connect_ws(token) {
+            return new Promise((resolve, reject) => {
+            const vad_neg_threshold = parseFloat("0.5");
+            const vad_pos_threshold = parseFloat("0.98");
+            const vad_min_speech_duration_ms = parseInt("300");
+            const vad_min_silence_duration_ms = parseInt("600");
+            const system_prompt = `你是一个AI故事讲解机器人，专注于用生动、亲切的语言，向观众讲述中国非遗扎染的历史之美与文化内涵。
+            ## 扎染的背景  
+            - “非遗扎染”是中国首批国家级非物质文化遗产之一，以蓝白为主色调，通过板蓝根天然染料和多样手工扎结技艺，展现独一无二的纹样之美。
+            - 它源于汉代，传承至今，融合自然哲思与民族文化，被誉为‘布上的诗’。
+            - 现代扎染跨界出圈，从影视到太空课堂，再到数码潮流，展现出非遗的活力与时代魅力。
+
+            ## 告别方式  
+            - 当用户说**“再见”**时，你应按照以下格式回复：  
+            “好的，再见。”`
+
+            let url = new URL("https://api-gai.sensetime.com/agent-5o/duplex/ws");
+            if (url.protocol == "https:") {
+                url.protocol = "wss:";
+            } else {
+                url.protocol = "ws:";
+            }
+            
+            url = new URL("ws", url);
+            url.searchParams.set("jwt", token);
+            url.searchParams.set("vad_neg_threshold", `${vad_neg_threshold}`);
+            url.searchParams.set("vad_pos_threshold", `${vad_pos_threshold}`);
+            url.searchParams.set("vad_min_speech_duration_ms", `${vad_min_speech_duration_ms}`);
+            url.searchParams.set("vad_min_silence_duration_ms", `${vad_min_silence_duration_ms}`);
+            if (system_prompt != "") {
+                url.searchParams.set("system_prompt", `${system_prompt}`);
+            }
+            url.searchParams.set("audio_only",true)
+            url.searchParams.set("voice_type","woman")
+            add_log(`websocket url: ${url}`);
+            const socket = new WebSocket(url);
+
+            // listening WebSocket open event
+            socket.addEventListener('open', () => {
+                console.log('WebSocket connection opened');
+                add_log('WebSocket connected.');
+            });
+
+            // listening WebSocket message event
+            socket.addEventListener('message', (event) => {
+                // if got agora channel and app token from apiserver throught websocket
+                msg = JSON.parse(event.data);
+                add_log(`Message from server: ${JSON.stringify(msg)}`);
+                switch (msg.type) {
+                    case "SetSessionId":
+                        const session_id = msg.session_id;
+                        // document.querySelector("#session_id").innerText = session_id;
+                        break;
+                    case "SetAgoraAppid": {
+                        agoraAppid = msg.agora_appid;
+                        add_log(`got agora appid: ${agoraAppid}`);
+                        break;
+                    }
+                    case "SetAgoraToken": {
+                        agoraToken = msg.agora_token;
+                        add_log(`got agora token: ${agoraToken}`);
+                        break;
+                    }
+                    case "SetAgoraChannelId": {
+                        agoraChannelId = msg.agora_channel_id;
+                        add_log(`got agora channel: ${agoraChannelId}`);
+                        resolve(socket)
+                        // break;
+                    }
+                    case "ResponseEndTextStream":{
+                        if(msg.text == "好的，再见。"){
+                            add_log(`got end flag`);
+                            (async ()=>{
+                                await stop_stream()
+                                await closed()
+                            })();
+                            resolve(socket)
+                        }
+                    }
+                }
+            });
+
+            // listening WebSocket error event
+            socket.addEventListener('error', (error) => {
+                console.error('WebSocket error:', error);
+		        add_log(`WebSocket error: ${error.message}`)
+            });
+
+            // listening WebSocket close event
+            socket.addEventListener('close', (event) => {
+                console.log('WebSocket connection closed', event);
+            });
+        });
+        }
+        
+        async function start_stream() {
+            add_log("step 1: create Agora client...");
+            client = AgoraRTC.createClient({
+                mode: "rtc",
+                codec: "vp8",
+                noiseSuppression: true
+            });
+
+            client.on("user-published", async (user, mediaType) => {
+                add_log(`step 4: start subscribe ${mediaType} from ${JSON.stringify(user)}...`);
+                await client.subscribe(user, mediaType);
+                if (mediaType === "audio") {
+                    const remoteAudioTrack = user.audioTrack;
+                    remoteAudioTrack.play();
+                } 
+                // else {
+                //     const remoteVideoTrack = user.videoTrack;
+                // }
+                // print remote stream stats
+                let remote_audio_stats = client.getRemoteAudioStats();
+                add_log(`pull audio stats: ${JSON.stringify(remote_audio_stats)}`);
+            });
+
+            add_log("step 2: join Agora channel...");
+            let uid = 1;
+            await client.join(agoraAppid, agoraChannelId, agoraToken, uid);
+
+            add_log("step 3: start publish video and audio...");
+            // create local audio and video tracks
+            const tracks = await Promise.all([
+                AgoraRTC.createMicrophoneAudioTrack({
+                    encoderConfig: "music_standard",
+                    AEC: true,
+                    ANS: true,
+                }),
+                // AgoraRTC.createCameraVideoTrack()
+            ])
+            localTracks.audioTrack = tracks[0]
+            // localTracks.videoTrack = tracks[1]
+            // publish local tracks to channel
+            await client.publish(Object.values(localTracks));
+
+            // play local video track
+            // localTracks.videoTrack.play("localVideo", { mirror: false });
+            // view local audio stream
+            const localAudioStream = localTracks.audioTrack.getMediaStreamTrack();
+            const stream = new MediaStream();
+            stream.addTrack(localAudioStream);
+            // print local stream stats
+            // let local_video_stats = client.getLocalVideoStats();
+            let local_audio_stats = client.getLocalAudioStats();
+            // add_log(`push video stats: ${JSON.stringify(local_video_stats)}`);
+            add_log(`push audio stats: ${JSON.stringify(local_audio_stats)}`);
+        }
+    
+        async function stop_stream() {
+        try {
+            await client.unpublish(Object.values(localTracks));
+            await client.leave();
+            client = null; 
+            add_log('Streaming stopped');
+            return
+        } catch (error) {
+            console.error('Error stopping stream:', error);
+        }
+                            
+        }
+    </script>
+</body>
+</html>
+
